@@ -157,6 +157,7 @@ pub struct FileCertificateStorage {
     base_path: PathBuf,
 
     /// File permissions (Unix)
+    #[cfg_attr(not(unix), allow(dead_code))]
     file_mode: u32,
 
     /// In-memory cache

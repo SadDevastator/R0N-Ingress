@@ -211,12 +211,15 @@ impl ControlResponse {
 /// Frame header for length-prefixed messages.
 ///
 /// Each message is prefixed with a 4-byte length header (big-endian u32).
+#[cfg(unix)]
 pub const FRAME_HEADER_SIZE: usize = 4;
 
 /// Maximum message size (16 MB).
+#[cfg(unix)]
 pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
 /// Encodes a message with length prefix.
+#[cfg(unix)]
 #[must_use]
 pub fn encode_frame(data: &[u8]) -> Vec<u8> {
     let len = data.len() as u32;
@@ -231,6 +234,7 @@ pub fn encode_frame(data: &[u8]) -> Vec<u8> {
 /// # Errors
 ///
 /// Returns `None` if the header is invalid or the message is too large.
+#[cfg(unix)]
 #[must_use]
 pub fn decode_frame_length(header: &[u8; FRAME_HEADER_SIZE]) -> Option<usize> {
     let len = u32::from_be_bytes(*header) as usize;
@@ -266,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_frame_encoding() {
         let data = b"hello world";
         let frame = encode_frame(data);
