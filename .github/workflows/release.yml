@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Validate the tag comes from beta or release branch
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      is_prerelease: ${{ steps.check.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check release type
+        id: check
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" == *"-beta"* || "$TAG" == *"-alpha"* || "$TAG" == *"-rc"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Pre-release detected: $TAG"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Stable release detected: $TAG"
+          fi
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: r0n-ingress
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact: r0n-ingress
+            cross: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            artifact: r0n-ingress
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: r0n-ingress
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: r0n-ingress
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: r0n-ingress.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../r0n-ingress-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../r0n-ingress-${{ matrix.target }}.zip ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: r0n-ingress-${{ matrix.target }}
+          path: r0n-ingress-${{ matrix.target }}.*
+
+  release:
+    name: Create Release
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec sha256sum {} \; | sed 's|  \./[^/]*/|  |' > ../SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+            SHA256SUMS

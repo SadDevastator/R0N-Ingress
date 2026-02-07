@@ -1,0 +1,32 @@
+# Clippy configuration for R0N Ingress
+# See: https://doc.rust-lang.org/clippy/configuration.html
+#
+# Lint levels are configured via Cargo.toml [lints] section or in code.
+# This file contains clippy threshold/behavior settings.
+
+# Minimum Supported Rust Version
+msrv = "1.75.0"
+
+# Cognitive complexity threshold for functions
+cognitive-complexity-threshold = 25
+
+# Maximum number of function arguments before warning
+too-many-arguments-threshold = 7
+
+# Maximum lines in a function before warning
+too-many-lines-threshold = 100
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Threshold for literal representation suggestions
+literal-representation-threshold = 4
+
+# Avoid breaking public API when possible
+avoid-breaking-exported-api = true
+
+# Allow these in tests
+allow-expect-in-tests = true
+allow-unwrap-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
