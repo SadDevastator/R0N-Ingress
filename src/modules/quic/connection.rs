@@ -838,9 +838,11 @@ mod tests {
 
     #[test]
     fn test_connection_stats() {
-        let mut stats = ConnectionStats::default();
-        stats.packets_sent = 100;
-        stats.packets_lost = 5;
+        let stats = ConnectionStats {
+            packets_sent: 100,
+            packets_lost: 5,
+            ..ConnectionStats::default()
+        };
 
         assert!((stats.loss_rate() - 0.05).abs() < 0.001);
     }

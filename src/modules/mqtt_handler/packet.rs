@@ -2060,8 +2060,10 @@ mod tests {
 
     #[test]
     fn test_disconnect_packet_v5() {
-        let mut disconnect = Disconnect::default();
-        disconnect.reason_code = 0x04; // Disconnect with will
+        let disconnect = Disconnect {
+            reason_code: 0x04, // Disconnect with will
+            ..Disconnect::default()
+        };
 
         let bytes = disconnect.serialize(5);
         let mut buf = bytes.freeze();

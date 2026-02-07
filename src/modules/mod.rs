@@ -1,7 +1,7 @@
 //! # Gateway Modules
 //!
 //! This module contains all the built-in modules for R0N Gateway.
-//! Each module implements the [`ModuleContract`] trait for uniform
+//! Each module implements the [`crate::module::ModuleContract`] trait for uniform
 //! lifecycle management and IPC communication.
 //!
 //! ## Available Modules

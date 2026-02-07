@@ -131,6 +131,20 @@ impl MessageHandler for ModuleHandler {
                     ControlResponse::with_status(message.id, ResponseStatus::Error)
                 }
             },
+            ControlCommand::Pause => match module.pause() {
+                Ok(()) => ControlResponse::ok(message.id),
+                Err(e) => ControlResponse::error(message.id, e.to_string()),
+            },
+            ControlCommand::Resume => match module.resume() {
+                Ok(()) => ControlResponse::ok(message.id),
+                Err(e) => ControlResponse::error(message.id, e.to_string()),
+            },
+            ControlCommand::Version => {
+                let version = module.contract_version();
+                let payload =
+                    format!("{}.{}.{}", version.major, version.minor, version.patch).into_bytes();
+                ControlResponse::ok_with_payload(message.id, payload)
+            },
             ControlCommand::Reload { config: _ } => {
                 ControlResponse::with_status(message.id, ResponseStatus::NotSupported)
             },

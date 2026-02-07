@@ -281,9 +281,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_exporter_start_stop() {
-        let mut config = ExporterConfig::default();
-        config.port = 19090; // Use a different port for tests
-        config.enabled = true;
+        let config = ExporterConfig {
+            port: 19090, // Use a different port for tests
+            enabled: true,
+            ..ExporterConfig::default()
+        };
 
         let registry = Arc::new(MetricsRegistry::new("test"));
         let mut exporter = PrometheusExporter::new(config, registry);
@@ -305,8 +307,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_exporter_disabled() {
-        let mut config = ExporterConfig::default();
-        config.enabled = false;
+        let config = ExporterConfig {
+            enabled: false,
+            ..ExporterConfig::default()
+        };
 
         let registry = Arc::new(MetricsRegistry::new("test"));
         let mut exporter = PrometheusExporter::new(config, registry);

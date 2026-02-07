@@ -55,7 +55,7 @@ impl TcpRouterConfig {
         Duration::from_secs(self.connect_timeout_secs)
     }
 
-    /// Get the IO timeout as an Option<Duration>.
+    /// Get the IO timeout as an `Option<Duration>`.
     #[must_use]
     pub fn io_timeout(&self) -> Option<Duration> {
         if self.io_timeout_secs == 0 {

@@ -790,8 +790,10 @@ mod tests {
 
     #[test]
     fn test_waf_disabled() {
-        let mut config = WafConfig::default();
-        config.enabled = false;
+        let config = WafConfig {
+            enabled: false,
+            ..WafConfig::default()
+        };
 
         let mut handler = WafHandler::with_config(config);
         let module_config = ModuleConfig::new();

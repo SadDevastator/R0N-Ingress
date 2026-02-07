@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_error_from_io() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "test");
+        let io_err = io::Error::other("test");
         let err: MetricsError = io_err.into();
         assert!(matches!(err, MetricsError::IoError(_)));
     }

@@ -14,7 +14,7 @@
 //! ## Architecture
 //!
 //! R0N Gateway is built with a modular architecture where each component
-//! implements the [`ModuleContract`] trait for uniform lifecycle management.
+//! implements the [`module::ModuleContract`] trait for uniform lifecycle management.
 //! The gateway is designed to be orchestrated by R0N.
 //!
 //! ## Modules

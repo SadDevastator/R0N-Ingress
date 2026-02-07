@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn test_is_recoverable() {
-        assert!(L4Error::Io(io::Error::new(io::ErrorKind::Other, "test")).is_recoverable());
+        assert!(L4Error::Io(io::Error::other("test")).is_recoverable());
         assert!(L4Error::BackendConnection("test".to_string()).is_recoverable());
         assert!(L4Error::Timeout("test".to_string()).is_recoverable());
         assert!(L4Error::ConnectionClosed("test".to_string()).is_recoverable());
@@ -119,7 +119,7 @@ mod tests {
         assert!(L4Error::HealthCheckFailed("test".to_string()).should_check_health());
         assert!(L4Error::Timeout("test".to_string()).should_check_health());
 
-        assert!(!L4Error::Io(io::Error::new(io::ErrorKind::Other, "test")).should_check_health());
+        assert!(!L4Error::Io(io::Error::other("test")).should_check_health());
         assert!(!L4Error::InvalidConfig("test".to_string()).should_check_health());
     }
 }

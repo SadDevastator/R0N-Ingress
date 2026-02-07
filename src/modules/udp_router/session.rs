@@ -375,8 +375,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_max_sessions() {
-        let mut settings = SessionSettings::default();
-        settings.max_sessions = 2;
+        let settings = SessionSettings {
+            max_sessions: 2,
+            ..SessionSettings::default()
+        };
         let manager = SessionManager::new(settings);
 
         // Create max sessions
@@ -398,8 +400,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_manager_cleanup() {
-        let mut settings = SessionSettings::default();
-        settings.timeout_secs = 0; // Immediate expiry
+        let settings = SessionSettings {
+            timeout_secs: 0, // Immediate expiry
+            ..SessionSettings::default()
+        };
         let manager = SessionManager::new(settings);
 
         let id = SessionId::new(make_addr(12345), make_addr(5353));

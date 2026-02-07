@@ -538,8 +538,8 @@ mod tests {
         lb.stats.record_connection();
 
         let metrics = lb.metrics();
-        assert!(metrics.counters.get("total_selections").is_some());
-        assert!(metrics.counters.get("total_connections").is_some());
+        assert!(metrics.counters.contains_key("total_selections"));
+        assert!(metrics.counters.contains_key("total_connections"));
     }
 
     #[test]

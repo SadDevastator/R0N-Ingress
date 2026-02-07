@@ -115,7 +115,7 @@ pub struct AcmeHandler {
     /// Configuration
     config: AcmeConfig,
 
-    /// ACME client (wrapped in Arc<RwLock> for async access)
+    /// ACME client (wrapped in `Arc<RwLock>` for async access)
     client: Option<Arc<RwLock<AcmeClient>>>,
 
     /// Current status

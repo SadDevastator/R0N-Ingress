@@ -530,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_filter_ordering() {
-        let mut filters = vec![
+        let mut filters = [
             TopicFilter::new("#").unwrap(),
             TopicFilter::new("a/b/c").unwrap(),
             TopicFilter::new("a/+/c").unwrap(),

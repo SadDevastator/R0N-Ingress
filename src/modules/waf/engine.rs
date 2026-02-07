@@ -745,8 +745,10 @@ mod tests {
 
     #[test]
     fn test_engine_detect_mode() {
-        let mut config = WafConfig::default();
-        config.mode = DetectionMode::Detect;
+        let config = WafConfig {
+            mode: DetectionMode::Detect,
+            ..WafConfig::default()
+        };
         let engine = RuleEngine::new(config);
 
         let context = ScanContext::new()

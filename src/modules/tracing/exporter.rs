@@ -750,7 +750,7 @@ mod tests {
         let exporter = InMemoryExporter::new();
         let span = create_test_span();
 
-        exporter.export(&[span.clone()]).unwrap();
+        exporter.export(std::slice::from_ref(&span)).unwrap();
         assert_eq!(exporter.span_count(), 1);
 
         let spans = exporter.get_spans();

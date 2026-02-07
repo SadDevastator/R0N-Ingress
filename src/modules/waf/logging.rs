@@ -476,8 +476,10 @@ mod tests {
 
     #[test]
     fn test_threat_log_max_entries() {
-        let mut config = ThreatLogConfig::default();
-        config.max_entries = 3;
+        let config = ThreatLogConfig {
+            max_entries: 3,
+            ..ThreatLogConfig::default()
+        };
         let log = ThreatLog::new(config);
 
         for i in 0..5 {
@@ -595,8 +597,10 @@ mod tests {
 
     #[test]
     fn test_format_json() {
-        let mut config = ThreatLogConfig::default();
-        config.format = LogFormat::Json;
+        let config = ThreatLogConfig {
+            format: LogFormat::Json,
+            ..ThreatLogConfig::default()
+        };
         let log = ThreatLog::new(config);
 
         let result = create_test_result();
@@ -641,8 +645,10 @@ mod tests {
 
     #[test]
     fn test_disabled_logging() {
-        let mut config = ThreatLogConfig::default();
-        config.enabled = false;
+        let config = ThreatLogConfig {
+            enabled: false,
+            ..ThreatLogConfig::default()
+        };
         let log = ThreatLog::new(config);
 
         let result = ScanResult::blocked("test");
