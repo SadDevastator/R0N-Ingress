@@ -1,3 +1,4 @@
+#![cfg(unix)]
 //! Integration tests for the Module Control Contract.
 
 use r0n_ingress::ipc::{
