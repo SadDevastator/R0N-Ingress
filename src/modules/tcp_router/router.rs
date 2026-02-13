@@ -154,6 +154,7 @@ impl TcpRouter {
     }
 
     /// Get router statistics.
+    #[inline]
     #[must_use]
     pub fn stats(&self) -> RouterStats {
         RouterStats {

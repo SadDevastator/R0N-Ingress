@@ -33,6 +33,7 @@ pub struct MemoryPool<T> {
 
 impl<T> MemoryPool<T> {
     /// Create a new memory pool.
+    #[inline]
     pub fn new(max_size: usize, factory: fn() -> T) -> Self {
         Self {
             pool: Mutex::new(VecDeque::with_capacity(max_size)),
@@ -55,8 +56,9 @@ impl<T> MemoryPool<T> {
     }
 
     /// Get an item from the pool or create a new one.
+    #[inline]
     pub fn get(&self) -> T {
-        if let Ok(mut pool) = self.pool.lock() {
+        if let Ok(mut pool) = self.pool.try_lock() {
             if let Some(item) = pool.pop_front() {
                 self.stats.hits.fetch_add(1, Ordering::Relaxed);
                 return item;
@@ -79,6 +81,7 @@ impl<T> MemoryPool<T> {
     }
 
     /// Get pool statistics.
+    #[inline]
     pub fn stats(&self) -> &PoolStats {
         &self.stats
     }
@@ -116,6 +119,7 @@ pub struct PoolStats {
 
 impl PoolStats {
     /// Get hit rate.
+    #[inline]
     pub fn hit_rate(&self) -> f64 {
         let hits = self.hits.load(Ordering::Relaxed);
         let misses = self.misses.load(Ordering::Relaxed);

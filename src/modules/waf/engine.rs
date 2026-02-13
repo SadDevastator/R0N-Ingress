@@ -9,7 +9,8 @@ use super::detector::{
 };
 use super::error::WafResult;
 use super::rules::{RuleCategory, RuleSet, RuleTarget};
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 
 /// Context for scanning a request
@@ -115,101 +116,129 @@ impl ScanContext {
         self
     }
 
-    /// Get value for a target
-    pub fn get_target_value(&self, target: &RuleTarget) -> Option<String> {
+    /// Get value for a target (zero-copy where possible via `Cow`)
+    pub fn get_target_value(&self, target: &RuleTarget) -> Option<Cow<'_, str>> {
         match target {
-            RuleTarget::Uri => Some(self.uri.clone()),
-            RuleTarget::QueryString => self.query_string.clone(),
-            RuleTarget::QueryParam(name) => self.query_params.get(name).cloned(),
+            RuleTarget::Uri => Some(Cow::Borrowed(&self.uri)),
+            RuleTarget::QueryString => self.query_string.as_deref().map(Cow::Borrowed),
+            RuleTarget::QueryParam(name) => self
+                .query_params
+                .get(name)
+                .map(|v| Cow::Borrowed(v.as_str())),
             RuleTarget::QueryParams => {
                 if self.query_params.is_empty() {
                     None
                 } else {
-                    Some(
+                    Some(Cow::Owned(
                         self.query_params
                             .values()
-                            .cloned()
+                            .map(String::as_str)
                             .collect::<Vec<_>>()
                             .join(" "),
-                    )
+                    ))
                 }
             },
-            RuleTarget::Body => self.body.clone(),
-            RuleTarget::FormField(name) => self.form_fields.get(name).cloned(),
+            RuleTarget::Body => self.body.as_deref().map(Cow::Borrowed),
+            RuleTarget::FormField(name) => self
+                .form_fields
+                .get(name)
+                .map(|v| Cow::Borrowed(v.as_str())),
             RuleTarget::FormFields => {
                 if self.form_fields.is_empty() {
                     None
                 } else {
-                    Some(
+                    Some(Cow::Owned(
                         self.form_fields
                             .values()
-                            .cloned()
+                            .map(String::as_str)
                             .collect::<Vec<_>>()
                             .join(" "),
-                    )
+                    ))
                 }
             },
             RuleTarget::JsonPath(_path) => {
                 // JSON path evaluation would go here
                 // For now, return the whole body
-                self.body.clone()
+                self.body.as_deref().map(Cow::Borrowed)
             },
-            RuleTarget::Header(name) => self.headers.get(&name.to_lowercase()).cloned(),
+            RuleTarget::Header(name) => self
+                .headers
+                .get(&name.to_lowercase())
+                .map(|v| Cow::Borrowed(v.as_str())),
             RuleTarget::Headers => {
                 if self.headers.is_empty() {
                     None
                 } else {
-                    Some(self.headers.values().cloned().collect::<Vec<_>>().join(" "))
+                    Some(Cow::Owned(
+                        self.headers
+                            .values()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    ))
                 }
             },
-            RuleTarget::Cookie(name) => self.cookies.get(name).cloned(),
+            RuleTarget::Cookie(name) => self.cookies.get(name).map(|v| Cow::Borrowed(v.as_str())),
             RuleTarget::Cookies => {
                 if self.cookies.is_empty() {
                     None
                 } else {
-                    Some(self.cookies.values().cloned().collect::<Vec<_>>().join(" "))
+                    Some(Cow::Owned(
+                        self.cookies
+                            .values()
+                            .map(String::as_str)
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    ))
                 }
             },
-            RuleTarget::Method => Some(self.method.clone()),
-            RuleTarget::RequestLine => Some(format!("{} {}", self.method, self.uri)),
-            RuleTarget::UserAgent => self.headers.get("user-agent").cloned(),
-            RuleTarget::ContentType => self.content_type.clone(),
-            RuleTarget::Referer => self.headers.get("referer").cloned(),
+            RuleTarget::Method => Some(Cow::Borrowed(&self.method)),
+            RuleTarget::RequestLine => Some(Cow::Owned(format!("{} {}", self.method, self.uri))),
+            RuleTarget::UserAgent => self
+                .headers
+                .get("user-agent")
+                .map(|v| Cow::Borrowed(v.as_str())),
+            RuleTarget::ContentType => self.content_type.as_deref().map(Cow::Borrowed),
+            RuleTarget::Referer => self
+                .headers
+                .get("referer")
+                .map(|v| Cow::Borrowed(v.as_str())),
         }
     }
 
-    /// Get all scannable values
-    pub fn all_values(&self) -> Vec<(String, String)> {
-        let mut values = Vec::new();
-
-        values.push(("uri".to_string(), self.uri.clone()));
-        values.push(("method".to_string(), self.method.clone()));
+    /// Iterate all scannable values without allocating.
+    ///
+    /// Calls `f(key, value)` for every field in the context.
+    /// Returns early with `Err` if the callback returns `Err`.
+    fn for_each_value<E>(&self, mut f: impl FnMut(&str, &str) -> Result<(), E>) -> Result<(), E> {
+        f("uri", &self.uri)?;
+        f("method", &self.method)?;
 
         if let Some(qs) = &self.query_string {
-            values.push(("query_string".to_string(), qs.clone()));
+            f("query_string", qs)?;
         }
 
         for (k, v) in &self.query_params {
-            values.push((format!("query:{}", k), v.clone()));
+            f(k, v)?;
         }
 
         for (k, v) in &self.headers {
-            values.push((format!("header:{}", k), v.clone()));
+            f(k, v)?;
         }
 
         for (k, v) in &self.cookies {
-            values.push((format!("cookie:{}", k), v.clone()));
+            f(k, v)?;
         }
 
         if let Some(body) = &self.body {
-            values.push(("body".to_string(), body.clone()));
+            f("body", body)?;
         }
 
         for (k, v) in &self.form_fields {
-            values.push((format!("form:{}", k), v.clone()));
+            f(k, v)?;
         }
 
-        values
+        Ok(())
     }
 }
 
@@ -321,14 +350,29 @@ pub struct RuleEngine {
     /// Bypass rules
     bypass_rules: Vec<BypassRule>,
 
-    /// Disabled rule IDs (per route)
-    disabled_rules: HashMap<String, Vec<String>>,
+    /// Pre-compiled bypass regexes (for BypassOperator::Matches)
+    bypass_regexes: HashMap<String, regex::Regex>,
+
+    /// Disabled rule IDs (per route) — HashSet for O(1) lookup
+    disabled_rules: HashMap<String, HashSet<String>>,
 }
 
 impl RuleEngine {
     /// Create new rule engine with config
     pub fn new(config: WafConfig) -> Self {
         let detector_config = &config.detectors;
+
+        // Pre-compile any bypass regexes at construction time
+        let mut bypass_regexes = HashMap::new();
+        for rule in &config.bypass_rules {
+            for condition in &rule.conditions {
+                if matches!(condition.operator, BypassOperator::Matches) {
+                    if let Ok(re) = regex::Regex::new(&condition.value) {
+                        bypass_regexes.insert(condition.value.clone(), re);
+                    }
+                }
+            }
+        }
 
         Self {
             sqli_detector: SqlInjectionDetector::new(detector_config.sql_injection.clone()),
@@ -337,6 +381,7 @@ impl RuleEngine {
                 detector_config.path_traversal.clone(),
             ),
             bypass_rules: config.bypass_rules.clone(),
+            bypass_regexes,
             disabled_rules: HashMap::new(),
             rules: RuleSet::load_crs_rules(),
             config,
@@ -369,7 +414,7 @@ impl RuleEngine {
         self.disabled_rules
             .entry("*".to_string())
             .or_default()
-            .push(rule_id.to_string());
+            .insert(rule_id.to_string());
     }
 
     /// Disable a rule for a specific route
@@ -377,14 +422,14 @@ impl RuleEngine {
         self.disabled_rules
             .entry(route.to_string())
             .or_default()
-            .push(rule_id.to_string());
+            .insert(rule_id.to_string());
     }
 
-    /// Check if a rule is disabled for a route
+    /// Check if a rule is disabled for a route (O(1) HashSet lookup)
     fn is_rule_disabled(&self, rule_id: &str, route: Option<&str>) -> bool {
         // Check global disables
         if let Some(disabled) = self.disabled_rules.get("*") {
-            if disabled.iter().any(|id| id == rule_id) {
+            if disabled.contains(rule_id) {
                 return true;
             }
         }
@@ -392,7 +437,7 @@ impl RuleEngine {
         // Check route-specific disables
         if let Some(route) = route {
             if let Some(disabled) = self.disabled_rules.get(route) {
-                if disabled.iter().any(|id| id == rule_id) {
+                if disabled.contains(rule_id) {
                     return true;
                 }
             }
@@ -420,13 +465,20 @@ impl RuleEngine {
     }
 
     fn check_bypass_condition(&self, condition: &BypassCondition, context: &ScanContext) -> bool {
-        let field_value = match condition.field {
-            BypassField::SourceIp => context.source_ip.map(|ip| ip.to_string()),
-            BypassField::Path => Some(context.uri.clone()),
-            BypassField::Method => Some(context.method.clone()),
-            BypassField::Header => context.headers.values().next().cloned(),
-            BypassField::UserAgent => context.headers.get("user-agent").cloned(),
-            BypassField::ContentType => context.content_type.clone(),
+        let field_value: Option<Cow<'_, str>> = match condition.field {
+            BypassField::SourceIp => context.source_ip.map(|ip| Cow::Owned(ip.to_string())),
+            BypassField::Path => Some(Cow::Borrowed(&context.uri)),
+            BypassField::Method => Some(Cow::Borrowed(&context.method)),
+            BypassField::Header => context
+                .headers
+                .values()
+                .next()
+                .map(|v| Cow::Borrowed(v.as_str())),
+            BypassField::UserAgent => context
+                .headers
+                .get("user-agent")
+                .map(|v| Cow::Borrowed(v.as_str())),
+            BypassField::ContentType => context.content_type.as_deref().map(Cow::Borrowed),
         };
 
         let Some(value) = field_value else {
@@ -434,14 +486,15 @@ impl RuleEngine {
         };
 
         match condition.operator {
-            BypassOperator::Equals => value == condition.value,
-            BypassOperator::NotEquals => value != condition.value,
-            BypassOperator::Contains => value.contains(&condition.value),
-            BypassOperator::NotContains => !value.contains(&condition.value),
-            BypassOperator::StartsWith => value.starts_with(&condition.value),
-            BypassOperator::EndsWith => value.ends_with(&condition.value),
-            BypassOperator::Matches => regex::Regex::new(&condition.value)
-                .ok()
+            BypassOperator::Equals => *value == condition.value,
+            BypassOperator::NotEquals => *value != condition.value,
+            BypassOperator::Contains => value.contains(&*condition.value),
+            BypassOperator::NotContains => !value.contains(&*condition.value),
+            BypassOperator::StartsWith => value.starts_with(&*condition.value),
+            BypassOperator::EndsWith => value.ends_with(&*condition.value),
+            BypassOperator::Matches => self
+                .bypass_regexes
+                .get(&condition.value)
                 .is_some_and(|re| re.is_match(&value)),
             BypassOperator::InCidr => {
                 // Parse IP and check CIDR
@@ -553,26 +606,26 @@ impl RuleEngine {
     }
 
     fn run_detectors(&self, context: &ScanContext, result: &mut ScanResult) -> WafResult<()> {
-        let all_values = context.all_values();
-
-        // SQL injection detection
+        // SQL injection detection — iterate all values without allocating a Vec
         if self.sqli_detector.is_enabled() {
-            for (_, value) in &all_values {
+            context.for_each_value(|_key, value| {
                 let detection = self.sqli_detector.detect(value)?;
                 if detection.detected {
                     result.detector_results.push(detection);
                 }
-            }
+                Ok(())
+            })?;
         }
 
         // XSS detection
         if self.xss_detector.is_enabled() {
-            for (_, value) in &all_values {
+            context.for_each_value(|_key, value| {
                 let detection = self.xss_detector.detect(value)?;
                 if detection.detected {
                     result.detector_results.push(detection);
                 }
-            }
+                Ok(())
+            })?;
         }
 
         // Path traversal detection
@@ -583,7 +636,7 @@ impl RuleEngine {
                 result.detector_results.push(detection);
             }
 
-            for (key, value) in &all_values {
+            context.for_each_value(|key, value| {
                 if key.contains("file")
                     || key.contains("path")
                     || key.contains("url")
@@ -594,7 +647,8 @@ impl RuleEngine {
                         result.detector_results.push(detection);
                     }
                 }
-            }
+                Ok(())
+            })?;
         }
 
         Ok(())
@@ -602,12 +656,12 @@ impl RuleEngine {
 
     fn run_rules(&self, context: &ScanContext, result: &mut ScanResult) -> WafResult<()> {
         for rule in self.rules.enabled_rules() {
-            // Check if rule is disabled
+            // Check if rule is disabled (O(1) HashSet lookup)
             if self.is_rule_disabled(&rule.definition.id, context.route.as_deref()) {
                 continue;
             }
 
-            // Check each target
+            // Check each target — get_target_value returns Cow to avoid cloning
             for target in &rule.definition.targets {
                 if let Some(value) = context.get_target_value(target) {
                     if rule.matches(&value) {
@@ -679,16 +733,20 @@ mod tests {
             .with_header("X-Custom", "header-value");
 
         assert_eq!(
-            context.get_target_value(&RuleTarget::Uri),
-            Some("/test".to_string())
+            context.get_target_value(&RuleTarget::Uri).as_deref(),
+            Some("/test")
         );
         assert_eq!(
-            context.get_target_value(&RuleTarget::QueryParam("name".to_string())),
-            Some("value".to_string())
+            context
+                .get_target_value(&RuleTarget::QueryParam("name".to_string()))
+                .as_deref(),
+            Some("value")
         );
         assert_eq!(
-            context.get_target_value(&RuleTarget::Header("x-custom".to_string())),
-            Some("header-value".to_string())
+            context
+                .get_target_value(&RuleTarget::Header("x-custom".to_string()))
+                .as_deref(),
+            Some("header-value")
         );
     }
 

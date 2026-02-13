@@ -3,7 +3,6 @@
 use super::backend::Backend;
 use super::config::StickyHashKey;
 use super::error::{LoadBalancerError, LoadBalancerResult};
-use rand::Rng;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::SocketAddr;
@@ -435,7 +434,7 @@ impl Strategy for RandomStrategy {
                 return Err(LoadBalancerError::NoHealthyBackends("pool".to_string()));
             }
 
-            let idx = rand::rng().random_range(0..healthy.len());
+            let idx = rand::RngExt::random_range(&mut rand::rng(), 0..healthy.len());
             Ok(healthy[idx])
         })
     }

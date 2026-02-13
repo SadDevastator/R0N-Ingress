@@ -4,6 +4,7 @@ use super::config::{RuleAction, RuleSeverity, WafRuleConfig};
 use super::error::{WafError, WafResult};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 /// Rule category for classification
@@ -225,23 +226,24 @@ impl Transform {
         }
     }
 
-    /// Apply transformation to input
-    pub fn apply(&self, input: &str) -> String {
+    /// Apply transformation to input (zero-copy for no-op transforms)
+    pub fn apply<'a>(&self, input: &'a str) -> Cow<'a, str> {
         match self {
-            Self::Lowercase => input.to_lowercase(),
-            Self::Uppercase => input.to_uppercase(),
-            Self::UrlDecode => Self::url_decode(input),
-            Self::UrlDecodeUni => Self::url_decode_uni(input),
-            Self::HtmlEntityDecode => Self::html_entity_decode(input),
-            Self::RemoveWhitespace => input.chars().filter(|c| !c.is_whitespace()).collect(),
-            Self::CompressWhitespace => Self::compress_whitespace(input),
-            Self::RemoveComments => Self::remove_comments(input),
-            Self::RemoveNulls => input.replace('\0', ""),
-            Self::NormalizePath => Self::normalize_path(input),
-            Self::Base64Decode => Self::base64_decode(input),
-            Self::HexDecode => Self::hex_decode(input),
-            Self::Utf8ToUnicode => input.to_string(),
-            Self::None => input.to_string(),
+            Self::None | Self::Utf8ToUnicode => Cow::Borrowed(input),
+            Self::Lowercase => Cow::Owned(input.to_lowercase()),
+            Self::Uppercase => Cow::Owned(input.to_uppercase()),
+            Self::UrlDecode => Cow::Owned(Self::url_decode(input)),
+            Self::UrlDecodeUni => Cow::Owned(Self::url_decode_uni(input)),
+            Self::HtmlEntityDecode => Cow::Owned(Self::html_entity_decode(input)),
+            Self::RemoveWhitespace => {
+                Cow::Owned(input.chars().filter(|c| !c.is_whitespace()).collect())
+            },
+            Self::CompressWhitespace => Cow::Owned(Self::compress_whitespace(input)),
+            Self::RemoveComments => Cow::Owned(Self::remove_comments(input)),
+            Self::RemoveNulls => Cow::Owned(input.replace('\0', "")),
+            Self::NormalizePath => Cow::Owned(Self::normalize_path(input)),
+            Self::Base64Decode => Cow::Owned(Self::base64_decode(input)),
+            Self::HexDecode => Cow::Owned(Self::hex_decode(input)),
         }
     }
 
@@ -550,23 +552,30 @@ impl CompiledRule {
 
     /// Check if rule matches input
     pub fn matches(&self, input: &str) -> bool {
-        // Apply transformations
-        let mut value = input.to_string();
+        // Apply transformations — zero-copy chain: only allocate if a transform modifies
+        let mut owned: Option<String> = None;
         for transform in &self.definition.transforms {
-            value = transform.apply(&value);
+            let current = owned.as_deref().unwrap_or(input);
+            match transform.apply(current) {
+                Cow::Borrowed(_) => {}, // no-op, keep current value
+                Cow::Owned(new) => {
+                    owned = Some(new);
+                },
+            }
         }
+        let value = owned.as_deref().unwrap_or(input);
 
         match self.definition.operator {
             Operator::Regex | Operator::DetectSqli | Operator::DetectXss => {
-                self.regex.as_ref().is_some_and(|re| re.is_match(&value))
+                self.regex.as_ref().is_some_and(|re| re.is_match(value))
             },
-            Operator::Contains => value.contains(&self.definition.pattern),
+            Operator::Contains => value.contains(&*self.definition.pattern),
             Operator::Equals => value == self.definition.pattern,
-            Operator::StartsWith => value.starts_with(&self.definition.pattern),
-            Operator::EndsWith => value.ends_with(&self.definition.pattern),
+            Operator::StartsWith => value.starts_with(&*self.definition.pattern),
+            Operator::EndsWith => value.ends_with(&*self.definition.pattern),
             Operator::PhraseMatch => {
                 let lower = value.to_lowercase();
-                self.phrases.iter().any(|p| lower.contains(p))
+                self.phrases.iter().any(|p| lower.contains(p.as_str()))
             },
             Operator::LengthExceeds => self
                 .definition

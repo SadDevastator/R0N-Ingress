@@ -60,6 +60,7 @@ pub struct ControlMessage {
 
 impl ControlMessage {
     /// Creates a new control message with the given command.
+    #[inline]
     #[must_use]
     pub fn new(id: u64, command: ControlCommand) -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -76,13 +77,35 @@ impl ControlMessage {
         }
     }
 
+    /// Creates a new control message with a pre-computed timestamp.
+    #[inline]
+    #[must_use]
+    pub fn with_timestamp(id: u64, command: ControlCommand, timestamp: u64) -> Self {
+        Self {
+            id,
+            command,
+            timestamp,
+        }
+    }
+
     /// Serializes the message to MessagePack bytes.
     ///
     /// # Errors
     ///
     /// Returns an error if serialization fails.
+    #[inline]
     pub fn to_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec(self)
+    }
+
+    /// Serializes the message into an existing buffer, avoiding allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization fails.
+    pub fn to_bytes_into(&self, buf: &mut Vec<u8>) -> Result<(), rmp_serde::encode::Error> {
+        buf.clear();
+        rmp_serde::encode::write(buf, self)
     }
 
     /// Deserializes a message from MessagePack bytes.
@@ -90,6 +113,7 @@ impl ControlMessage {
     /// # Errors
     ///
     /// Returns an error if deserialization fails.
+    #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(bytes)
     }
@@ -122,6 +146,7 @@ pub enum ResponseStatus {
 
 impl ResponseStatus {
     /// Returns `true` if the status indicates success.
+    #[inline]
     #[must_use]
     pub fn is_success(self) -> bool {
         matches!(self, Self::Ok)
@@ -149,12 +174,14 @@ pub struct ControlResponse {
 
 impl ControlResponse {
     /// Creates a successful response.
+    #[inline]
     #[must_use]
     pub fn ok(request_id: u64) -> Self {
         Self::with_status(request_id, ResponseStatus::Ok)
     }
 
     /// Creates a successful response with payload.
+    #[inline]
     #[must_use]
     pub fn ok_with_payload(request_id: u64, payload: Vec<u8>) -> Self {
         let mut response = Self::ok(request_id);
@@ -163,6 +190,7 @@ impl ControlResponse {
     }
 
     /// Creates an error response.
+    #[inline]
     #[must_use]
     pub fn error(request_id: u64, message: impl Into<String>) -> Self {
         let mut response = Self::with_status(request_id, ResponseStatus::Error);
@@ -171,6 +199,7 @@ impl ControlResponse {
     }
 
     /// Creates a response with a specific status.
+    #[inline]
     #[must_use]
     pub fn with_status(request_id: u64, status: ResponseStatus) -> Self {
         use std::time::{SystemTime, UNIX_EPOCH};
@@ -194,8 +223,19 @@ impl ControlResponse {
     /// # Errors
     ///
     /// Returns an error if serialization fails.
+    #[inline]
     pub fn to_bytes(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec(self)
+    }
+
+    /// Serializes the response into an existing buffer, avoiding allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization fails.
+    pub fn to_bytes_into(&self, buf: &mut Vec<u8>) -> Result<(), rmp_serde::encode::Error> {
+        buf.clear();
+        rmp_serde::encode::write(buf, self)
     }
 
     /// Deserializes a response from MessagePack bytes.
@@ -203,6 +243,7 @@ impl ControlResponse {
     /// # Errors
     ///
     /// Returns an error if deserialization fails.
+    #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(bytes)
     }

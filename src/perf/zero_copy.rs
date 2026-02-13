@@ -17,6 +17,7 @@ pub struct SharedBuffer {
 
 impl SharedBuffer {
     /// Create a new shared buffer from data.
+    #[inline]
     pub fn new(data: Vec<u8>) -> Self {
         let len = data.len();
         Self {
@@ -26,6 +27,7 @@ impl SharedBuffer {
     }
 
     /// Create from a slice (copies the data).
+    #[inline]
     pub fn from_slice(data: &[u8]) -> Self {
         Self::new(data.to_vec())
     }
@@ -46,6 +48,7 @@ impl SharedBuffer {
     }
 
     /// Get the length of the visible data.
+    #[inline]
     pub fn len(&self) -> usize {
         self.range.len()
     }
@@ -56,6 +59,7 @@ impl SharedBuffer {
     }
 
     /// Get the data as a slice.
+    #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.data[self.range.clone()]
     }
@@ -132,6 +136,7 @@ impl BufferChain {
     }
 
     /// Add a buffer to the chain.
+    #[inline]
     pub fn push(&mut self, buffer: SharedBuffer) {
         self.total_len += buffer.len();
         self.buffers.push(buffer);
@@ -143,6 +148,7 @@ impl BufferChain {
     }
 
     /// Get total length.
+    #[inline]
     pub fn len(&self) -> usize {
         self.total_len
     }

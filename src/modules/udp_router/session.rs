@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
-use tracing::{debug, trace};
+use tracing::debug;
 
 use super::config::SessionSettings;
 
@@ -87,6 +87,15 @@ impl Session {
     #[must_use]
     pub fn is_expired(&self, timeout: Duration) -> bool {
         self.last_activity.elapsed() > timeout
+    }
+
+    /// Check if the session has expired relative to a reference time.
+    ///
+    /// More efficient than `is_expired` when checking many sessions,
+    /// as the caller snapshots `Instant::now()` once.
+    #[must_use]
+    pub fn is_expired_at(&self, now: Instant, timeout: Duration) -> bool {
+        now.duration_since(self.last_activity) > timeout
     }
 
     /// Update the session on activity.
@@ -270,36 +279,38 @@ impl SessionManager {
     /// Remove expired sessions.
     pub async fn cleanup(&self) -> usize {
         let timeout = self.settings.timeout();
+        let now = Instant::now();
         let mut sessions = self.sessions.write().await;
-        let mut reverse = self.backend_to_client.write().await;
 
         let before = sessions.len();
 
-        // Find expired sessions
-        let expired_ids: Vec<SessionId> = sessions
-            .iter()
-            .filter(|(_, s)| s.is_expired(timeout))
-            .map(|(id, _)| id.clone())
-            .collect();
-
-        // Remove expired sessions
-        for id in &expired_ids {
-            if let Some(session) = sessions.remove(id) {
-                reverse.remove(&session.backend);
-                trace!(session = %id, "Removed expired session");
+        // Single-pass retain: collect backend addrs for reverse-map cleanup
+        let mut expired_backends = Vec::new();
+        sessions.retain(|_id, session| {
+            if session.is_expired_at(now, timeout) {
+                expired_backends.push(session.backend);
+                false
+            } else {
+                true
             }
-        }
+        });
 
         let removed = before - sessions.len();
+
+        // Only acquire reverse-map lock if we actually removed something
         if removed > 0 {
+            // Drop sessions lock before acquiring reverse to reduce contention
+            drop(sessions);
+
+            let mut reverse = self.backend_to_client.write().await;
+            for backend in &expired_backends {
+                reverse.remove(backend);
+            }
+
             self.stats
                 .expired_sessions
                 .fetch_add(removed as u64, Ordering::Relaxed);
-            debug!(
-                removed,
-                remaining = sessions.len(),
-                "Cleaned up expired sessions"
-            );
+            debug!(removed, "Cleaned up expired sessions");
         }
 
         removed

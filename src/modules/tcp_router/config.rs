@@ -99,6 +99,7 @@ fn default_true() -> bool {
 
 impl ListenerConfig {
     /// Create a new listener config.
+    #[inline]
     #[must_use]
     pub fn new(port: u16) -> Self {
         Self {
@@ -111,6 +112,7 @@ impl ListenerConfig {
     }
 
     /// Set the bind address.
+    #[inline]
     #[must_use]
     pub fn with_address(mut self, address: IpAddr) -> Self {
         self.address = address;
@@ -118,6 +120,7 @@ impl ListenerConfig {
     }
 
     /// Set the listener name.
+    #[inline]
     #[must_use]
     pub fn with_name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
@@ -125,6 +128,7 @@ impl ListenerConfig {
     }
 
     /// Get the socket address.
+    #[inline]
     #[must_use]
     pub fn socket_addr(&self) -> SocketAddr {
         SocketAddr::new(self.address, self.port)
@@ -151,6 +155,7 @@ pub struct RouteConfig {
 
 impl RouteConfig {
     /// Create a new route config.
+    #[inline]
     #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
@@ -162,6 +167,7 @@ impl RouteConfig {
     }
 
     /// Set match criteria.
+    #[inline]
     #[must_use]
     pub fn with_match(mut self, criteria: MatchCriteria) -> Self {
         self.match_criteria = criteria;
@@ -169,6 +175,7 @@ impl RouteConfig {
     }
 
     /// Add a backend.
+    #[inline]
     #[must_use]
     pub fn with_backend(mut self, backend: BackendConfig) -> Self {
         self.backends.push(backend);
@@ -198,6 +205,7 @@ pub struct MatchCriteria {
 
 impl MatchCriteria {
     /// Create a port-based match.
+    #[inline]
     #[must_use]
     pub fn port(port: u16) -> Self {
         Self {
@@ -209,6 +217,7 @@ impl MatchCriteria {
     }
 
     /// Create a catch-all match.
+    #[inline]
     #[must_use]
     pub fn catch_all() -> Self {
         Self {
@@ -244,6 +253,7 @@ fn default_weight() -> u32 {
 
 impl BackendConfig {
     /// Create a new backend config.
+    #[inline]
     #[must_use]
     pub fn new(address: IpAddr, port: u16) -> Self {
         Self {
@@ -255,6 +265,7 @@ impl BackendConfig {
     }
 
     /// Set the weight.
+    #[inline]
     #[must_use]
     pub fn with_weight(mut self, weight: u32) -> Self {
         self.weight = weight;
@@ -262,6 +273,7 @@ impl BackendConfig {
     }
 
     /// Get the socket address.
+    #[inline]
     #[must_use]
     pub fn socket_addr(&self) -> SocketAddr {
         SocketAddr::new(self.address, self.port)
