@@ -102,7 +102,7 @@ impl AccessControlConfig {
 }
 
 /// Action to take for an access control rule.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleAction {
     /// Allow the request.

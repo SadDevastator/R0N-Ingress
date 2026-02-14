@@ -243,7 +243,7 @@ impl PolicyEngine {
                 && self.evaluate_conditions(&rule.conditions, context)?
             {
                 return Ok(PolicyDecision {
-                    action: rule.action.clone(),
+                    action: rule.action,
                     matched_rule: Some(rule.name.clone()),
                     reason: format!("Rule '{}' matched", rule.name),
                     data: HashMap::new(),
@@ -269,7 +269,7 @@ impl PolicyEngine {
 
                 if !rule.action.is_allow() {
                     return Ok(PolicyDecision {
-                        action: rule.action.clone(),
+                        action: rule.action,
                         matched_rule: Some(rule.name.clone()),
                         reason: format!("Rule '{}' denied access", rule.name),
                         data: HashMap::new(),
@@ -301,14 +301,14 @@ impl PolicyEngine {
 
                 if rule.action.is_allow() {
                     return Ok(PolicyDecision {
-                        action: rule.action.clone(),
+                        action: rule.action,
                         matched_rule: Some(rule.name.clone()),
                         reason: format!("Rule '{}' allowed access", rule.name),
                         data: HashMap::new(),
                     });
                 }
                 last_deny = Some(PolicyDecision {
-                    action: rule.action.clone(),
+                    action: rule.action,
                     matched_rule: Some(rule.name.clone()),
                     reason: format!("Rule '{}' denied access", rule.name),
                     data: HashMap::new(),
@@ -331,7 +331,7 @@ impl PolicyEngine {
                 && self.evaluate_conditions(&rule.conditions, context)?
             {
                 return Ok(PolicyDecision {
-                    action: rule.action.clone(),
+                    action: rule.action,
                     matched_rule: Some(rule.name.clone()),
                     reason: format!("Rule '{}' matched (priority {})", rule.name, rule.priority),
                     data: HashMap::new(),
@@ -507,7 +507,7 @@ impl PolicyEngine {
     /// Get the default decision.
     fn default_decision(&self) -> PolicyDecision {
         PolicyDecision {
-            action: self.config.default_action.clone(),
+            action: self.config.default_action,
             matched_rule: None,
             reason: "No rules matched, using default action".to_string(),
             data: HashMap::new(),

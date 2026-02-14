@@ -2,3 +2,5 @@
 milestones.md
 srs.md
 .vscode
+*.log
+scripts/

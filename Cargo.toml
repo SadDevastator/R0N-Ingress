@@ -1,6 +1,6 @@
 [package]
 name = "R0N-Ingress"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 edition = "2021"
 description = "High-performance, protocol-agnostic ingress controller for routing and managing traffic"
 license = "Apache-2.0"
@@ -73,6 +73,98 @@ chrono = { version = "0.4.43", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3.25.0"
+criterion = { version = "0.8.2", features = ["html_reports", "async_tokio"] }
+comfy-table = "7.2.2"
+tabled = "0.20.0"
+colored = "3.1.1"
+sysinfo = "0.38.1"
+rcgen = "0.14.7"
+
+[[bench]]
+name = "module_lifecycle"
+harness = false
+
+[[bench]]
+name = "load_balancer"
+harness = false
+
+[[bench]]
+name = "rate_limiting"
+harness = false
+
+[[bench]]
+name = "tcp_router"
+harness = false
+
+[[bench]]
+name = "udp_router"
+harness = false
+
+[[bench]]
+name = "tls_terminator"
+harness = false
+
+[[bench]]
+name = "http_handler"
+harness = false
+
+[[bench]]
+name = "websocket_handler"
+harness = false
+
+[[bench]]
+name = "access_control"
+harness = false
+
+[[bench]]
+name = "waf"
+harness = false
+
+[[bench]]
+name = "l4_passthrough"
+harness = false
+
+[[bench]]
+name = "mqtt_handler"
+harness = false
+
+[[bench]]
+name = "http3_quic"
+harness = false
+
+[[bench]]
+name = "ipc"
+harness = false
+
+[[bench]]
+name = "config"
+harness = false
+
+[[bench]]
+name = "perf_internals"
+harness = false
+
+[[bench]]
+name = "metrics_tracing"
+harness = false
+
+[[bench]]
+name = "e2e_proxy"
+harness = false
+
+[[bench]]
+name = "concurrency"
+harness = false
+
+[[bench]]
+name = "saturation"
+harness = false
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
 
 [lints.rust]
 unsafe_code = "warn"

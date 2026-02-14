@@ -1,4 +1,8 @@
 //! IP filtering for access control.
+//!
+//! Uses a CIDR radix trie for O(32) worst-case lookups and a bloom filter
+//! front guard for fast rejection of non-matching IPs.  Cache keyed on
+//! pre-parsed `u32` addresses to eliminate per-lookup String allocation.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -6,170 +10,351 @@ use std::sync::{Arc, RwLock};
 use super::config::{IpFilterConfig, IpRule, RuleAction};
 use super::error::{AccessControlError, AccessControlResult};
 
+// ── Bloom filter front guard ────────────────────────────────────────────────
+
+/// Bloom filter sized for CIDR prefix entries.
+/// Eliminates trie traversal for IPs that definitely match no rule.
+struct BloomGuard {
+    /// Bit storage (power-of-two sized for branchless masking).
+    bits: Box<[u64]>,
+    /// Total number of bits (always power of two).
+    num_bits: usize,
+    /// Prefix lengths that have at least one rule.
+    active_prefixes: Vec<u8>,
+}
+
+impl BloomGuard {
+    /// Number of hash functions (k=3 for ~1 % FP at 10 bits/entry).
+    const K: u32 = 3;
+
+    fn new(estimated_entries: usize) -> Self {
+        let num_bits = (estimated_entries * 10).max(64).next_power_of_two();
+        let num_words = num_bits / 64;
+        Self {
+            bits: vec![0u64; num_words].into_boxed_slice(),
+            num_bits,
+            active_prefixes: Vec::new(),
+        }
+    }
+
+    fn insert(&mut self, prefix_len: u8, network: u32) {
+        if !self.active_prefixes.contains(&prefix_len) {
+            self.active_prefixes.push(prefix_len);
+            self.active_prefixes.sort_unstable();
+        }
+        let key = Self::combine(prefix_len, network);
+        for seed in 0..Self::K {
+            let idx = Self::hash(key, seed) & (self.num_bits - 1);
+            self.bits[idx >> 6] |= 1 << (idx & 63);
+        }
+    }
+
+    /// Returns `false` when the IP **cannot** match any rule (no false negatives).
+    #[inline]
+    fn might_match(&self, ip: u32) -> bool {
+        for &plen in &self.active_prefixes {
+            let mask = prefix_mask(plen);
+            let network = ip & mask;
+            let key = Self::combine(plen, network);
+            let mut hit = true;
+            for seed in 0..Self::K {
+                let idx = Self::hash(key, seed) & (self.num_bits - 1);
+                if self.bits[idx >> 6] & (1 << (idx & 63)) == 0 {
+                    hit = false;
+                    break;
+                }
+            }
+            if hit {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[inline(always)]
+    fn combine(prefix_len: u8, network: u32) -> u64 {
+        (prefix_len as u64) << 32 | network as u64
+    }
+
+    /// FNV-1a inspired hash with seed mixing.
+    #[inline(always)]
+    fn hash(key: u64, seed: u32) -> usize {
+        let mut h = 0x517c_c1b7_2722_0a95_u64;
+        h ^= key;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        h ^= seed as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        h as usize
+    }
+}
+
+impl std::fmt::Debug for BloomGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BloomGuard")
+            .field("num_bits", &self.num_bits)
+            .field("active_prefixes", &self.active_prefixes)
+            .finish()
+    }
+}
+
+// ── CIDR radix trie ─────────────────────────────────────────────────────────
+
+/// Binary radix trie for CIDR longest-prefix matching.
+///
+/// Provides deterministic O(32) lookup for IPv4 addresses with
+/// priority-aware matching across overlapping prefixes.
+#[derive(Debug)]
+struct CidrTrie {
+    root: TrieNode,
+}
+
+#[derive(Debug)]
+struct TrieNode {
+    children: [Option<Box<TrieNode>>; 2],
+    /// `(priority, action)` if a CIDR rule terminates here.
+    entry: Option<(i32, RuleAction)>,
+}
+
+impl TrieNode {
+    #[inline]
+    const fn empty() -> Self {
+        Self {
+            children: [None, None],
+            entry: None,
+        }
+    }
+}
+
+impl CidrTrie {
+    fn new() -> Self {
+        Self {
+            root: TrieNode::empty(),
+        }
+    }
+
+    /// Insert a CIDR rule.  Keeps the higher-priority action on conflict.
+    fn insert(&mut self, network: u32, prefix_len: u8, priority: i32, action: RuleAction) {
+        let mut node = &mut self.root;
+        for i in 0..prefix_len {
+            let bit = ((network >> (31 - i)) & 1) as usize;
+            node = node.children[bit].get_or_insert_with(|| Box::new(TrieNode::empty()));
+        }
+        match node.entry {
+            Some((ep, _)) if ep >= priority => {}, // existing wins
+            _ => node.entry = Some((priority, action)),
+        }
+    }
+
+    /// Longest-prefix match returning the highest-priority action along the path.
+    #[inline]
+    fn lookup(&self, ip: u32) -> Option<RuleAction> {
+        let mut node = &self.root;
+        let mut best: Option<(i32, RuleAction)> = node.entry;
+        for i in 0..32u8 {
+            let bit = ((ip >> (31 - i)) & 1) as usize;
+            match &node.children[bit] {
+                Some(child) => {
+                    node = child;
+                    if let Some(entry) = node.entry {
+                        match best {
+                            Some((bp, _)) if bp >= entry.0 => {},
+                            _ => best = Some(entry),
+                        }
+                    }
+                },
+                None => break,
+            }
+        }
+        best.map(|(_, action)| action)
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Compute mask for a given prefix length.  `/0` → `0`, `/32` → `0xFFFF_FFFF`.
+#[inline(always)]
+const fn prefix_mask(prefix_len: u8) -> u32 {
+    if prefix_len == 0 {
+        0
+    } else {
+        !0u32 << (32 - prefix_len)
+    }
+}
+
+// ── IpFilter ────────────────────────────────────────────────────────────────
+
 /// IP filter for allow/deny list matching.
+///
+/// Uses a CIDR radix trie for O(32) worst-case lookups and a bloom filter
+/// front guard for O(1) fast rejection of non-matching IPs.
+/// Cache is keyed on pre-parsed `u32` to eliminate per-lookup allocation.
 #[derive(Debug)]
 pub struct IpFilter {
     /// Configuration.
     config: IpFilterConfig,
 
-    /// Parsed CIDR rules sorted by priority.
-    rules: Vec<ParsedIpRule>,
+    /// Radix trie for CIDR matching.
+    trie: CidrTrie,
 
-    /// Cache of IP -> action results.
-    cache: Arc<RwLock<HashMap<String, RuleAction>>>,
+    /// Bloom filter for fast-path rejection.
+    bloom: BloomGuard,
+
+    /// Cache of ip_u32 → action (no String allocation).
+    cache: Arc<RwLock<HashMap<u32, RuleAction>>>,
 
     /// Maximum cache size.
     max_cache_size: usize,
-}
 
-/// A parsed IP rule with pre-computed CIDR data.
-#[derive(Debug, Clone)]
-struct ParsedIpRule {
-    /// Original rule.
-    rule: IpRule,
-
-    /// Parsed addresses as CIDR entries.
-    cidrs: Vec<CidrEntry>,
-}
-
-/// A parsed CIDR entry.
-#[derive(Debug, Clone)]
-struct CidrEntry {
-    /// Network address as u32.
-    network: u32,
-
-    /// Subnet mask as u32.
-    mask: u32,
-
-    /// Original string for debugging.
-    #[allow(dead_code)]
-    original: String,
+    /// Pre-parsed trusted proxy CIDRs: `(network, mask)`.
+    trusted_proxy_cidrs: Vec<(u32, u32)>,
 }
 
 impl IpFilter {
     /// Create a new IP filter from configuration.
     pub fn new(config: IpFilterConfig) -> AccessControlResult<Self> {
-        let mut rules = Vec::with_capacity(config.rules.len());
+        let total_cidrs: usize = config.rules.iter().map(|r| r.addresses.len()).sum();
+        let mut trie = CidrTrie::new();
+        let mut bloom = BloomGuard::new(total_cidrs.max(1));
 
         for rule in &config.rules {
-            let mut cidrs = Vec::with_capacity(rule.addresses.len());
-
             for addr in &rule.addresses {
-                let cidr = Self::parse_cidr(addr)?;
-                cidrs.push(cidr);
+                let (network, prefix_len) = Self::parse_cidr_pair(addr)?;
+                let mask = prefix_mask(prefix_len);
+                let masked = network & mask;
+                trie.insert(masked, prefix_len, rule.priority, rule.action);
+                bloom.insert(prefix_len, masked);
             }
-
-            rules.push(ParsedIpRule {
-                rule: rule.clone(),
-                cidrs,
-            });
         }
 
-        // Sort by priority (higher first)
-        rules.sort_by(|a, b| b.rule.priority.cmp(&a.rule.priority));
+        // Pre-parse trusted proxies (avoids per-request allocation)
+        let mut trusted_proxy_cidrs = Vec::with_capacity(config.trusted_proxies.len());
+        for proxy in &config.trusted_proxies {
+            let (network, prefix_len) = Self::parse_cidr_pair(proxy)?;
+            let mask = prefix_mask(prefix_len);
+            trusted_proxy_cidrs.push((network & mask, mask));
+        }
 
         Ok(Self {
             config,
-            rules,
-            cache: Arc::new(RwLock::new(HashMap::new())),
-            max_cache_size: 10000,
+            trie,
+            bloom,
+            cache: Arc::new(RwLock::new(HashMap::with_capacity(256))),
+            max_cache_size: 10_000,
+            trusted_proxy_cidrs,
         })
     }
 
-    /// Parse a CIDR string into network/mask.
-    fn parse_cidr(addr: &str) -> AccessControlResult<CidrEntry> {
+    /// Parse a CIDR string into `(network_u32, prefix_len)`.  Zero allocation.
+    fn parse_cidr_pair(addr: &str) -> AccessControlResult<(u32, u8)> {
         let (ip_str, prefix_len) = if let Some((ip, prefix)) = addr.split_once('/') {
-            let prefix_len: u8 = prefix.parse().map_err(|_| {
+            let plen: u8 = prefix.parse().map_err(|_| {
                 AccessControlError::InvalidCidr(format!("invalid prefix length in '{addr}'"))
             })?;
-
-            if prefix_len > 32 {
+            if plen > 32 {
                 return Err(AccessControlError::InvalidCidr(format!(
-                    "prefix length must be 0-32, got {prefix_len}"
+                    "prefix length must be 0-32, got {plen}"
                 )));
             }
-
-            (ip, prefix_len)
+            (ip, plen)
         } else {
-            // Single IP, treat as /32
             (addr, 32)
         };
 
         let network = Self::parse_ip(ip_str)?;
-        let mask = if prefix_len == 0 {
-            0
-        } else {
-            !0u32 << (32 - prefix_len)
-        };
-
-        Ok(CidrEntry {
-            network: network & mask,
-            mask,
-            original: addr.to_string(),
-        })
+        Ok((network, prefix_len))
     }
 
-    /// Parse an IP address string to u32.
+    /// Parse an IPv4 address string to `u32`.  Zero allocation (byte scan).
+    #[inline]
     fn parse_ip(ip: &str) -> AccessControlResult<u32> {
-        let parts: Vec<&str> = ip.split('.').collect();
+        let bytes = ip.as_bytes();
+        let mut result = 0u32;
+        let mut octet: u32 = 0;
+        let mut dots = 0u8;
+        let mut digit_count = 0u8;
 
-        if parts.len() != 4 {
+        for &b in bytes {
+            match b {
+                b'0'..=b'9' => {
+                    digit_count += 1;
+                    if digit_count > 3 {
+                        return Err(AccessControlError::InvalidIpAddress(format!(
+                            "octet too long in '{ip}'"
+                        )));
+                    }
+                    octet = octet * 10 + (b - b'0') as u32;
+                    if octet > 255 {
+                        return Err(AccessControlError::InvalidIpAddress(format!(
+                            "octet > 255 in '{ip}'"
+                        )));
+                    }
+                },
+                b'.' => {
+                    if digit_count == 0 {
+                        return Err(AccessControlError::InvalidIpAddress(format!(
+                            "empty octet in '{ip}'"
+                        )));
+                    }
+                    result = (result << 8) | octet;
+                    octet = 0;
+                    dots += 1;
+                    digit_count = 0;
+                    if dots > 3 {
+                        return Err(AccessControlError::InvalidIpAddress(format!(
+                            "too many octets in '{ip}'"
+                        )));
+                    }
+                },
+                _ => {
+                    return Err(AccessControlError::InvalidIpAddress(format!(
+                        "invalid character in '{ip}'"
+                    )));
+                },
+            }
+        }
+
+        if dots != 3 || digit_count == 0 {
             return Err(AccessControlError::InvalidIpAddress(format!(
-                "expected 4 octets, got {} in '{ip}'",
-                parts.len()
+                "expected 4 octets in '{ip}'"
             )));
         }
-
-        let mut result = 0u32;
-        for (i, part) in parts.iter().enumerate() {
-            let octet: u8 = part.parse().map_err(|_| {
-                AccessControlError::InvalidIpAddress(format!("invalid octet '{part}' in '{ip}'"))
-            })?;
-            result |= (octet as u32) << (24 - i * 8);
-        }
-
+        result = (result << 8) | octet;
         Ok(result)
     }
 
     /// Check if an IP address matches this filter.
+    #[inline]
     pub fn check(&self, ip: &str) -> AccessControlResult<RuleAction> {
-        // Check cache first
+        // Parse first — enables u32 cache key (no String allocation)
+        let ip_u32 = Self::parse_ip(ip)?;
+
+        // Fast path: cache lookup with u32 key
         {
             let cache = self.cache.read().unwrap();
-            if let Some(action) = cache.get(ip) {
-                return Ok(action.clone());
+            if let Some(&action) = cache.get(&ip_u32) {
+                return Ok(action);
             }
         }
 
-        // Parse the IP
-        let ip_u32 = Self::parse_ip(ip)?;
+        // Bloom filter: fast reject IPs that cannot match any rule
+        let action = if !self.bloom.might_match(ip_u32) {
+            self.config.default_action
+        } else {
+            // Trie lookup: O(32) deterministic, priority-aware
+            self.trie
+                .lookup(ip_u32)
+                .unwrap_or(self.config.default_action)
+        };
 
-        // Check rules in priority order
-        let action = self.evaluate_rules(ip_u32);
-
-        // Cache the result
+        // Populate cache (u32 key — zero heap allocation)
         {
             let mut cache = self.cache.write().unwrap();
             if cache.len() < self.max_cache_size {
-                cache.insert(ip.to_string(), action.clone());
+                cache.insert(ip_u32, action);
             }
         }
 
         Ok(action)
-    }
-
-    /// Evaluate rules for an IP.
-    fn evaluate_rules(&self, ip: u32) -> RuleAction {
-        for parsed_rule in &self.rules {
-            for cidr in &parsed_rule.cidrs {
-                if (ip & cidr.mask) == cidr.network {
-                    return parsed_rule.rule.action.clone();
-                }
-            }
-        }
-
-        // No rule matched, return default
-        self.config.default_action.clone()
     }
 
     /// Check if an IP is allowed.
@@ -188,18 +373,13 @@ impl IpFilter {
             return Ok(direct_ip.to_string());
         }
 
-        // If we have trusted proxies configured, verify the direct connection
-        if !self.config.trusted_proxies.is_empty() {
-            let direct_ip_u32 = Self::parse_ip(direct_ip)?;
-            let mut is_trusted = false;
-
-            for proxy in &self.config.trusted_proxies {
-                let cidr = Self::parse_cidr(proxy)?;
-                if (direct_ip_u32 & cidr.mask) == cidr.network {
-                    is_trusted = true;
-                    break;
-                }
-            }
+        // Use pre-parsed trusted proxy CIDRs (no per-request allocation)
+        if !self.trusted_proxy_cidrs.is_empty() {
+            let direct_u32 = Self::parse_ip(direct_ip)?;
+            let is_trusted = self
+                .trusted_proxy_cidrs
+                .iter()
+                .any(|&(network, mask)| (direct_u32 & mask) == network);
 
             if !is_trusted {
                 return Ok(direct_ip.to_string());
@@ -337,17 +517,17 @@ mod tests {
 
     #[test]
     fn test_parse_cidr() {
-        let cidr = IpFilter::parse_cidr("192.168.0.0/16").unwrap();
-        assert_eq!(cidr.network, 0xC0A80000);
-        assert_eq!(cidr.mask, 0xFFFF0000);
+        let (net, plen) = IpFilter::parse_cidr_pair("192.168.0.0/16").unwrap();
+        assert_eq!(net & prefix_mask(plen), 0xC0A80000);
+        assert_eq!(prefix_mask(plen), 0xFFFF0000);
 
-        let cidr = IpFilter::parse_cidr("10.0.0.0/8").unwrap();
-        assert_eq!(cidr.network, 0x0A000000);
-        assert_eq!(cidr.mask, 0xFF000000);
+        let (net, plen) = IpFilter::parse_cidr_pair("10.0.0.0/8").unwrap();
+        assert_eq!(net & prefix_mask(plen), 0x0A000000);
+        assert_eq!(prefix_mask(plen), 0xFF000000);
 
-        let cidr = IpFilter::parse_cidr("192.168.1.1").unwrap();
-        assert_eq!(cidr.network, 0xC0A80101);
-        assert_eq!(cidr.mask, 0xFFFFFFFF);
+        let (net, plen) = IpFilter::parse_cidr_pair("192.168.1.1").unwrap();
+        assert_eq!(net & prefix_mask(plen), 0xC0A80101);
+        assert_eq!(prefix_mask(plen), 0xFFFFFFFF);
     }
 
     #[test]
